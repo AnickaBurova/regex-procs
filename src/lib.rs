@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 
-#[macro_use]
 mod regex_parser;
+mod regex_parser_ref;
 
 /// Creates regex parsers defined as attributes.
 /// There is different behaviour depending on the data.
@@ -38,7 +38,12 @@ mod regex_parser;
 ///     // animals = Human { name: "Fero", likes: Some(Sheep { name: "Mara", colour: 3,
 ///     //              enemy: Some(Wolf { name: "Martin", enemy: Some(Human { name: "Anca", likes: None }) }) }) }
 /// ```
-#[proc_macro_derive(RegexParser, attributes(rgx, no_chain, no_apply))]
+#[proc_macro_derive(RegPar, attributes(rgx, no_chain, no_apply))]
 pub fn regex_parser(input: TokenStream) -> TokenStream {
     regex_parser::run(input)
+}
+
+#[proc_macro_derive(RegParRef, attributes(rgx, no_chain, no_apply))]
+pub fn regex_parser_ref(input: TokenStream) -> TokenStream {
+    regex_parser_ref::run(input)
 }

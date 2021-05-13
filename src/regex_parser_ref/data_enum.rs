@@ -2,11 +2,11 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TS;
 use syn::{DeriveInput, Meta, MetaNameValue, parse_quote, Data, Fields, Expr, Variant, Ident, Stmt};
 use quote::{quote, format_ident};
-use crate::regex_parser::get_generics;
+use crate::regex_parser_ref::get_generics;
 
 
 pub fn process(obj: DeriveInput) -> TokenStream {
-    let ( generics, where_clause) = get_generics(&obj);
+    let (from_match_generics, generics, where_clause) = get_generics(&obj);
     match obj.data {
         Data::Enum(enm) => {
             let name = obj.ident;
@@ -22,19 +22,19 @@ pub fn process(obj: DeriveInput) -> TokenStream {
 
 
             TokenStream::from(quote!{
-                impl#generics regex_parsers::FromMatch for #name#generics
+                impl<#from_match_generics> regex_parsers::rp_ref::FromMatch<'t> for #name#generics
                  #where_clause {
-                    fn from_match<'t>(m: Option<regex::Match<'t>>) -> Self {
-                        use regex_parsers::*;
+                    fn from_match(m: Option<regex::Match<'t>>) -> Self {
+                        use regex_parsers::rp_ref::*;
                         let m = m.expect(#expect_msg);
                         Self::parse_regex(m.as_str()).expect(#expect_msg)
                     }
                 }
 
-                impl#generics regex_parsers::RegexParser for #name#generics
+                impl<#from_match_generics> regex_parsers::rp_ref::RegexParser<'t> for #name#generics
                 #where_clause {
-                    fn parse_regex<'t>(txt: &'t str) -> Option<Self> {
-                        use regex_parsers::*;
+                    fn parse_regex(txt: &'t str) -> Option<Self> {
+                        use regex_parsers::rp_ref::*;
                         lazy_static::lazy_static! {
                             #(#statics)*
                         }

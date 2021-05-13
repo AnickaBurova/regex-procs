@@ -4,7 +4,7 @@ use syn::{Type, Ident, DeriveInput, Meta, MetaNameValue, Item, Lit, parse_quote,
 use quote::{quote, format_ident};
 use std::collections::HashMap;
 use proc_macro2::Span;
-use crate::regex_parser::get_generics;
+use crate::regex_parser_ref::get_generics;
 
 
 pub fn process(obj: DeriveInput) -> TokenStream {
@@ -45,9 +45,9 @@ pub fn process(obj: DeriveInput) -> TokenStream {
                     }
                 }
                 Fields::Unit => {
-                   if rgx.len() > 1 {
-                       panic!("Only one regex pattern for unit struct to match the pattern");
-                   }
+                    if rgx.len() > 1 {
+                        panic!("Only one regex pattern for unit struct to match the pattern");
+                    }
                     unit_regex(obj, rgx.pop().unwrap())
                 }
             }
@@ -59,7 +59,7 @@ pub fn process(obj: DeriveInput) -> TokenStream {
 
 fn one_regex_named(obj: &DeriveInput, rgx: String, fields: &FieldsNamed) -> TS {
     let name = &obj.ident;
-    let ( generics, where_clause) = get_generics(obj);
+    let (from_match_generics, generics, where_clause) = get_generics(obj);
     let expect_msg = format!("Incorrect regex to parse {}", name);
     // for one rgx, we dont need to search for the names or indices, all should be present in the regex
     // let (use_code, from_match, regex_parser) = regex_parsers!();
@@ -70,19 +70,19 @@ fn one_regex_named(obj: &DeriveInput, rgx: String, fields: &FieldsNamed) -> TS {
     }).collect::<Vec<TS>>();
     // FromMatch is only available if we can create the whole struct out of one rgx
     quote!{
-        impl#generics regex_parsers::FromMatch for #name#generics
+        impl<#from_match_generics> regex_parsers::rp_ref::FromMatch<'t> for #name#generics
         #where_clause {
-            fn from_match<'t>(m: Option<regex::Match<'t>>) -> Self {
-                use regex_parsers::*;
+            fn from_match(m: Option<regex::Match<'t>>) -> Self {
+                use regex_parsers::rp_ref::*;
                 let m = m.expect(#expect_msg);
                 Self::parse_regex(m.as_str()).expect(#expect_msg)
             }
         }
 
-        impl#generics regex_parsers::RegexParser for #name#generics
+        impl<#from_match_generics> regex_parsers::rp_ref::RegexParser<'t> for #name#generics
         #where_clause {
-            fn parse_regex<'t>(txt: &'t str) -> Option<Self> {
-                use regex_parsers::*;
+            fn parse_regex(txt: &'t str) -> Option<Self> {
+                use regex_parsers::rp_ref::*;
                 use regex::Regex;
                 lazy_static::lazy_static! {
                     static ref RGX: Regex = Regex::new(#rgx).unwrap();
@@ -101,7 +101,7 @@ fn one_regex_named(obj: &DeriveInput, rgx: String, fields: &FieldsNamed) -> TS {
 
 fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed) -> TS {
     let name = &obj.ident;
-    let (generics, where_clause) = get_generics(obj);
+    let (from_match_generics, generics, where_clause) = get_generics(obj);
     // let (from_match_generics, generics, where_clause) = get_generics(obj);
     // let expect_msg = format!("Incorrect regex to parse {}", name);
     // create N supporting structs for each regex
@@ -195,7 +195,7 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
             code.push(parse_quote!{
                 impl #name {
                     pub fn parse_regex(txt: &str) -> Option<#sname> {
-                        use regex_parsers::*;
+                        use regex_parsers::rp_ref::*;
                         lazy_static::lazy_static!{
                             static ref RGX: regex::Regex = regex::Regex::new(#rgx).unwrap();
                         }
@@ -215,7 +215,7 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
             code.push(parse_quote!{
                 impl #prev_name {
                     pub fn parse_regex_chain(self, txt: &str) -> either::Either<#next_name, Self> {
-                        use regex_parsers::*;
+                        use regex_parsers::rp_ref::*;
                         lazy_static::lazy_static!{
                             static ref RGX: regex::Regex = regex::Regex::new(#rgx).unwrap();
                         }
@@ -238,7 +238,6 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
     }
 
     quote!{
-        #[derive(Debug)]
         #vis enum #apply_enum_name#generics {
             #(#apply_enums,)*
         }
@@ -250,11 +249,11 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
                 }
             }
         }
-        impl#generics regex_parsers::RegexParserApply for #name#generics
+        impl<#from_match_generics> regex_parsers::rp_ref::RegexParserApply<'t> for #name#generics
         #where_clause {
             type Apply = #apply_enum_name;
-            fn parse_apply<'t>(txt: &'t str) -> Option<#apply_enum_name> {
-                use regex_parsers::Cap;
+            fn parse_apply(txt: &'t str) -> Option<#apply_enum_name> {
+                use regex_parsers::rp_ref::*;
                 lazy_static::lazy_static! {
                     #(#statics)*
                 }
@@ -270,7 +269,7 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
                 lazy_static::lazy_static! {
                     #(#statics)*
                 }
-                use regex_parsers::Cap;
+                use regex_parsers::rp_ref::*;
 
                 #(#update else)*
                 { false }
@@ -293,7 +292,7 @@ fn parse_fields(fields: &[(Ident, Type)]) -> impl Iterator<Item = TS> + '_ {
 
 fn one_regex_unnamed(obj: &DeriveInput, rgx: String, fields: &FieldsUnnamed) -> TS {
     let name = &obj.ident;
-    let (generics, where_clause) = get_generics(obj);
+    let (from_match_generics, generics, where_clause) = get_generics(obj);
     let expect_msg = format!("Incorrect regex to parse {}", name);
     let fields = (0..fields.unnamed.len()).map(|index|{
         //fields.unnamed.iter().enumerate().map(|(index, field)| {
@@ -303,19 +302,19 @@ fn one_regex_unnamed(obj: &DeriveInput, rgx: String, fields: &FieldsUnnamed) -> 
     // for one rgx, we dont need to search for the names or indices, all should be present in the regex
     // FromMatch is only available if we can create the whole struct out of one rgx
     quote!{
-        impl#generics regex_parsers::FromMatch for #name#generics
+        impl<#from_match_generics> regex_parsers::rp_ref::FromMatch<'t> for #name#generics
         #where_clause {
-            fn from_match<'t>(m: Option<regex::Match<'t>>) -> Self {
-                use regex_parsers::FromMatch
+            fn from_match(m: Option<regex::Match<'t>>) -> Self {
+                use regex_parsers::rp_ref::*
                 let m = m.expect(#expect_msg);
                 Self::parse_regex(m.as_str()).expect(#expect_msg)
             }
         }
 
-        impl#generics regex_parsers::RegexParser for #name#generics
+        impl<#from_match_generics> regex_parsers::rp_ref::RegexParser<'t> for #name#generics
         #where_clause {
-            fn parse_regex<'t>(txt: &str) -> Option<Self> {
-                use regex_parsers::Cap;
+            fn parse_regex(txt: &str) -> Option<Self> {
+                use regex_parsers::rp_ref::*;
                 use regex::Regex;
                 lazy_static::lazy_static! {
                     static ref RGX: Regex = Regex::new(#rgx).unwrap();
@@ -341,22 +340,22 @@ fn mul_regex_unnamed(_obj: &DeriveInput, _rgx: Vec<String>, _fields: &FieldsUnna
 
 fn unit_regex(obj: DeriveInput, rgx: String) -> TS {
     let name = &obj.ident;
-    let (generics, where_clause) = get_generics(&obj);
+    let (from_match_generics, generics, where_clause) = get_generics(&obj);
     let expect_msg = format!("Incorrect regex to parse {}", name);
     quote!{
-        impl#generics regex_parsers::FromMatch for #name#generics
+        impl<#from_match_generics> regex_parsers::rp_ref::FromMatch<'t> for #name#generics
         #where_clause {
-            fn from_match<'t>(m: Option<regex::Match<'t>>) -> Self {
-                use regex_parsers::FromMatch;
+            fn from_match(m: Option<regex::Match<'t>>) -> Self {
+                use regex_parsers::rp_ref::*FromMatch;
                 let m = m.expect(#expect_msg);
                 Self::parse_regex(m.as_str()).expect(#expect_msg)
             }
         }
 
-        impl#generics regex_parsers::RegexParser for #name#generics
+        impl<#from_match_generics> regex_parsers::rp_ref::RegexParser<'t> for #name#generics
         #where_clause {
-            fn parse_regex<'t>(txt: &str) -> Option<Self> {
-                use regex_parsers::Cap;
+            fn parse_regex(txt: &str) -> Option<Self> {
+                use regex_parsers::rp_ref::*Cap;
                 use regex::Regex;
                 lazy_static::lazy_static! {
                     static ref RGX: Regex = Regex::new(#rgx).unwrap();

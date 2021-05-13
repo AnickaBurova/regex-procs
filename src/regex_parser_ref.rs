@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TS;
-use syn::{DeriveInput, Data};
+use syn::{DeriveInput, Data, GenericParam};
 use quote::quote;
 
 //
@@ -32,15 +32,36 @@ pub fn run(input: TokenStream) -> TokenStream {
     }
 }
 
-fn get_generics(obj: &DeriveInput) -> (Option<TS>, Option<TS>) {
+fn get_generics(obj: &DeriveInput) -> (TS, Option<TS>, Option<TS>) {
     if obj.generics.params.is_empty() {
-        (None, None)
+        (quote!{'t}, None, None)
     } else {
         let generics = obj.generics.clone();
 
         let params = generics.params.iter().map(|g| g.clone());
+        // check if the generics have lifetime of name 't
+        let mut has_t = false;
+        for generic in generics.params.iter() {
+            match generic {
+                GenericParam::Type(_) => {}
+                GenericParam::Lifetime(lf) => {
+                    if lf.lifetime.ident == "t" {
+                        has_t = true;
+                        break;
+                    }
+                }
+                GenericParam::Const(_) => {}
+            }
+        }
+        let fm = params.clone();
+        let from_match = if has_t {
+            quote!{ #(#fm),* }
+        } else {
+            quote!{ 't, #(#fm),* }
+        };
         let where_clause = &obj.generics.where_clause.clone();
         (
+            from_match,
             Some(quote! { <#(#params),*>}),
             Some(quote! { #where_clause }),
         )
