@@ -361,7 +361,11 @@ fn unit_regex(obj: DeriveInput, rgx: String) -> TS {
                 lazy_static::lazy_static! {
                     static ref RGX: Regex = Regex::new(#rgx).unwrap();
                 }
-                RGX.is_match(txt).map(|_| Self )
+                if RGX.is_match(txt) {
+                    Some(Self)
+                } else {
+                    None
+                }
             }
         }
     }
