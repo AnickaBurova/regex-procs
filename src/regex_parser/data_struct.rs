@@ -123,6 +123,9 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
     let mut apply_rgx = Vec::<TS>::new();
     let mut apply_apply = Vec::<TS>::new();
     let apply_enum_name = format_ident!("{}Apply", name);
+    let chain_enum_name = format_ident!("{}Chain", name);
+    let mut chain_enums = Vec::<Variant>::new();
+    let mut chain_rgx = Vec::<TS>::new();
     let last_index = rgx.len() -1;
     let vis = &obj.vis;
     for (index, rgx) in rgx.drain(..).enumerate() {
@@ -134,6 +137,7 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
                 panic!("Incorrect capturing group '{}' in the {} rgx", name, index);
             }
         }).collect::<Vec<_>>();
+        let is_last = index == last_index;
         let static_name = format_ident!("{}{}", name.to_string().to_uppercase(), index);
         statics.push(parse_quote!{
             static ref #static_name: regex::Regex = regex::Regex::new(#rgx).unwrap();
@@ -157,7 +161,63 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
         // define the helping structure or nothing if no more fields in the all_fields, because we are
         // finally doing the last parsing
         let sname = format_ident!("{}{}", name, index);
+        let prev_field_names = str_field_names(&prev_fields).collect::<Vec<_>>();
+        let parses = parse_fields(&fields).collect::<Vec<_>>();
+        if prev_fields.is_empty() {
+            chain_rgx.push(quote!{
+                Self::Start => if let Some(cap) = #static_name.captures(txt) {
+                    either::Either::Right(
+                        Self::#sname {
+                            #(#parses)*
+                        }
+                    )
+                } else {
+                    either::Either::Right ( Self::Start )
+                }
+            });
+        } else if !is_last {
+            chain_rgx.push(quote!{
+                Self::#prev_name { #(#prev_field_names),*} => if let Some(cap) = #static_name.captures(txt) {
+                    either::Either::Right(
+                        Self::#sname {
+                            #(#prev_field_names,)*
+                            #(#parses)*
+                        }
+                    )
+                } else {
+                    either::Either::Right(
+                        Self::#prev_name {
+                            #(#prev_field_names),*
+                        }
+                    )
+                }
+            });
+        } else {
+            chain_rgx.push(quote!{
+                Self::#prev_name { #(#prev_field_names),*} => if let Some(cap) = #static_name.captures(txt) {
+                    either::Either::Left(
+                        #name {
+                            #(#prev_field_names,)*
+                            #(#parses)*
+                        }
+                    )
+                } else {
+                    either::Either::Right(
+                        Self::#prev_name {
+                            #(#prev_field_names),*
+                        }
+                    )
+                }
+            });
+        }
+        let prev_f = str_fields(&prev_fields).collect::<Vec<_>>();
         let current = str_fields(&fields).collect::<Vec<_>>();
+        chain_enums.push(parse_quote!{
+            #sname {
+                #(#prev_f)*
+                #(#current)*
+            }
+        });
         apply_enums.push(parse_quote!{
             #sname {
                 #(#current)*
@@ -168,7 +228,7 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
                 #(#apply_fields_assign)*
             }
         });
-        let parses = parse_fields(&fields).collect::<Vec<_>>();
+
         apply_rgx.push(quote!{
             if let Some(cap) = #static_name.captures(txt) {
                 Some(#apply_enum_name::#sname {
@@ -239,6 +299,26 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
 
     quote!{
         #[derive(Debug)]
+        #vis enum #chain_enum_name#generics {
+            Start,
+            #(#chain_enums,)*
+        }
+
+        impl#generics #chain_enum_name#generics #where_clause {
+            #vis fn parse(self, txt: &str) -> either::Either<#name, Self> {
+                use regex_parsers::Cap;
+                lazy_static::lazy_static! {
+                    #(#statics)*
+                }
+                match self {
+                    #(#chain_rgx,)*
+
+                    _ =>  todo!(),
+                }
+            }
+        }
+
+        #[derive(Debug)]
         #vis enum #apply_enum_name#generics {
             #(#apply_enums,)*
         }
@@ -275,6 +355,9 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
                 #(#update else)*
                 { false }
             }
+            #vis fn start_chain() -> #chain_enum_name {
+                #chain_enum_name::Start
+            }
         }
 
         #(#code)*
@@ -284,6 +367,12 @@ fn mul_regex_named(obj: &DeriveInput, mut rgx: Vec<String>, fields: &FieldsNamed
 fn str_fields(fields: &[(Ident, Type)]) -> impl Iterator<Item = TS> + '_{
     fields.iter().map(|(name, ty)| quote! { #name: #ty, })
 }
+
+fn str_field_names(fields: &[(Ident, Type)]) -> impl Iterator<Item = Ident> + '_{
+    fields.iter().map(|(name, _ty)| name.clone())
+}
+
+
 fn parse_fields(fields: &[(Ident, Type)]) -> impl Iterator<Item = TS> + '_ {
     fields.iter().map(|(name, _)| {
         let text = format!("{}", name);
@@ -306,7 +395,7 @@ fn one_regex_unnamed(obj: &DeriveInput, rgx: String, fields: &FieldsUnnamed) -> 
         impl#generics regex_parsers::FromMatch for #name#generics
         #where_clause {
             fn from_match<'t>(m: Option<regex::Match<'t>>) -> Self {
-                use regex_parsers::FromMatch
+                use regex_parsers::*;
                 let m = m.expect(#expect_msg);
                 Self::parse_regex(m.as_str()).expect(#expect_msg)
             }
@@ -315,7 +404,7 @@ fn one_regex_unnamed(obj: &DeriveInput, rgx: String, fields: &FieldsUnnamed) -> 
         impl#generics regex_parsers::RegexParser for #name#generics
         #where_clause {
             fn parse_regex<'t>(txt: &str) -> Option<Self> {
-                use regex_parsers::Cap;
+                use regex_parsers::*;
                 use regex::Regex;
                 lazy_static::lazy_static! {
                     static ref RGX: Regex = Regex::new(#rgx).unwrap();
